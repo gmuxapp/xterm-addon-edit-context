@@ -513,29 +513,69 @@ export class EditContextAddon implements ITerminalAddon {
   // We need to redirect that focus to our overlay element so the OS text
   // input service connects to our EditContext.
   //
-  // Strategy:
-  //   - Listen for focus on xterm's textarea; when it fires, refocus overlay.
-  //   - Listen for clicks/taps on the terminal container; focus overlay.
-  //   - On mobile (touch device), position the overlay so the OS opens the
-  //     keyboard without scrolling the page (same trick as gmux's
-  //     focusTerminalInput).
+  // The critical constraint: when xterm's textarea loses focus, xterm fires
+  // _handleTextAreaBlur which:
+  //   1. Clears textarea.value (breaks any pending composition)
+  //   2. Removes the 'focus' CSS class (dims the cursor, stops blink)
+  //   3. Sends ESC [O (focus-out) to the PTY if sendFocus mode is enabled
+  //   4. Fires onBlur → renderService.handleBlur()
+  //
+  // We suppress this by intercepting the textarea's blur and focus events
+  // in the capture phase during our redirect. We also proxy focus/blur
+  // from our overlay back to the textarea so xterm's visual state stays
+  // correct (cursor blink, focus class, sendFocus sequences).
 
   private _wireFocus(
     overlay: HTMLElement,
     terminal: Terminal,
     container: HTMLElement,
   ): void {
+    // True while we're in the middle of a focus redirect. During this
+    // window, we suppress xterm's blur handler on the textarea and skip
+    // re-entering the redirect from textarea's focus event.
     let redirecting = false
 
     const textarea = terminal.textarea
     if (!textarea) return
 
-    // When xterm focuses its textarea, steal focus to our overlay.
-    const onTextareaFocus = () => {
-      if (redirecting) return
+    // Suppress xterm's blur handler when we steal focus.
+    // Registered in capture phase so it fires before xterm's own listener.
+    const onTextareaBlur = (ev: FocusEvent) => {
+      if (redirecting) {
+        ev.stopImmediatePropagation()
+      }
+    }
+
+    // When xterm focuses its textarea (e.g. user clicked terminal, or
+    // term.focus() was called), redirect to our overlay.
+    const onTextareaFocus = (ev: FocusEvent) => {
+      if (redirecting) {
+        // We're in the middle of a redirect; suppress so xterm doesn't
+        // fire _handleTextAreaFocus a second time.
+        ev.stopImmediatePropagation()
+        return
+      }
+      // Suppress the focus event from reaching xterm's handler (we'll
+      // fire it synthetically when the overlay gets focus instead).
+      ev.stopImmediatePropagation()
       redirecting = true
       this._focusOverlay(overlay)
       redirecting = false
+    }
+
+    // When our overlay gains focus, tell xterm it's focused by dispatching
+    // a synthetic focus event on the textarea. This triggers xterm's
+    // _handleTextAreaFocus: adds 'focus' class, shows cursor, sends
+    // ESC [I if sendFocus is enabled.
+    const onOverlayFocus = () => {
+      textarea.dispatchEvent(new FocusEvent('focus'))
+    }
+
+    // When our overlay loses focus (user tapped outside), tell xterm it's
+    // blurred. This triggers xterm's _handleTextAreaBlur.
+    const onOverlayBlur = () => {
+      if (redirecting) return
+      textarea.dispatchEvent(new FocusEvent('blur'))
     }
 
     // When the terminal container is clicked/tapped, focus overlay.
@@ -545,14 +585,22 @@ export class EditContextAddon implements ITerminalAddon {
           ev.target.closest('button, input, textarea, select, a, label, [role="button"]')) {
         return
       }
+      redirecting = true
       this._focusOverlay(overlay)
+      redirecting = false
     }
 
-    textarea.addEventListener('focus', onTextareaFocus)
+    textarea.addEventListener('blur', onTextareaBlur, { capture: true })
+    textarea.addEventListener('focus', onTextareaFocus, { capture: true })
+    overlay.addEventListener('focus', onOverlayFocus)
+    overlay.addEventListener('blur', onOverlayBlur)
     container.addEventListener('click', onContainerClick)
 
     this._disposables.push(() => {
-      textarea.removeEventListener('focus', onTextareaFocus)
+      textarea.removeEventListener('blur', onTextareaBlur, { capture: true })
+      textarea.removeEventListener('focus', onTextareaFocus, { capture: true })
+      overlay.removeEventListener('focus', onOverlayFocus)
+      overlay.removeEventListener('blur', onOverlayBlur)
       container.removeEventListener('click', onContainerClick)
     })
   }
