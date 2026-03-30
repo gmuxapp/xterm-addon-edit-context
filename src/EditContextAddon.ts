@@ -2,7 +2,7 @@
  * EditContext addon for xterm.js.
  *
  * Replaces xterm.js' hidden-textarea input path with the EditContext API.
- * On browsers with native support (Chrome/Edge 133+), uses the native API.
+ * On browsers with native support (Chrome/Edge 121+), uses the native API.
  * On Safari and Firefox, loads a polyfill that provides the same interface
  * via a hidden textarea with smarter event translation.
  *
@@ -95,9 +95,14 @@ function createOverlay(container: HTMLElement): HTMLDivElement {
  *
  * Returns a cleanup function.
  */
-function suppressXtermInput(container: HTMLElement): () => void {
+function suppressXtermInput(container: HTMLElement, textarea: HTMLTextAreaElement): () => void {
   const stop = (ev: Event) => {
-    ev.stopImmediatePropagation()
+    // Only suppress events originating from xterm's textarea. Events from
+    // other sources (e.g. the polyfill's hidden textarea inside a shadow
+    // root) must pass through or the polyfill's input translation breaks.
+    if (ev.target === textarea) {
+      ev.stopImmediatePropagation()
+    }
   }
 
   // These are the events xterm.js listens for on its textarea:
@@ -219,7 +224,10 @@ export class EditContextAddon implements ITerminalAddon {
     this._editContext = ec
 
     // 3. Suppress xterm's textarea input handling.
-    this._disposables.push(suppressXtermInput(container))
+    const textarea = terminal.textarea
+    if (textarea) {
+      this._disposables.push(suppressXtermInput(container, textarea))
+    }
 
     // 4. Wire up events.
     this._wireTextUpdate(ec, terminal)
@@ -538,9 +546,17 @@ export class EditContextAddon implements ITerminalAddon {
     const textarea = terminal.textarea
     if (!textarea) return
 
-    // Suppress xterm's blur handler when we steal focus.
-    // Registered in capture phase so it fires before xterm's own listener.
+    // Suppress xterm's blur/focus handlers when we steal focus.
+    // Registered in capture phase so they fire before xterm's own listeners.
+    //
+    // Key subtlety: onOverlayFocus/onOverlayBlur dispatch synthetic
+    // FocusEvents on the textarea so xterm updates its visual state
+    // (cursor blink, focus CSS class, sendFocus sequences). We must let
+    // those synthetic events through to xterm. We distinguish them by
+    // checking isTrusted: browser-initiated focus/blur events are trusted,
+    // our dispatched ones are not.
     const onTextareaBlur = (ev: FocusEvent) => {
+      if (!ev.isTrusted) return  // our synthetic event; let xterm see it
       if (redirecting) {
         ev.stopImmediatePropagation()
       }
@@ -549,6 +565,7 @@ export class EditContextAddon implements ITerminalAddon {
     // When xterm focuses its textarea (e.g. user clicked terminal, or
     // term.focus() was called), redirect to our overlay.
     const onTextareaFocus = (ev: FocusEvent) => {
+      if (!ev.isTrusted) return  // our synthetic event; let xterm see it
       if (redirecting) {
         // We're in the middle of a redirect; suppress so xterm doesn't
         // fire _handleTextAreaFocus a second time.
