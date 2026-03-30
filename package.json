@@ -1,0 +1,58 @@
+{
+  "name": "xterm-addon-edit-context",
+  "version": "0.1.0",
+  "description": "An xterm.js addon that replaces the default hidden-textarea input with the EditContext API for better mobile keyboard support (dictation, autocorrect, swipe typing, hold-backspace word deletion, iOS spacebar trackpad).",
+  "type": "module",
+  "main": "lib/index.js",
+  "types": "lib/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./lib/index.d.ts",
+      "import": "./lib/index.js"
+    }
+  },
+  "files": [
+    "lib",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "xterm",
+    "xterm.js",
+    "addon",
+    "editcontext",
+    "mobile",
+    "keyboard",
+    "input",
+    "dictation",
+    "autocorrect",
+    "ime",
+    "ios",
+    "android",
+    "terminal"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gmuxapp/xterm-addon-edit-context.git"
+  },
+  "peerDependencies": {
+    "@xterm/xterm": ">=5.0.0"
+  },
+  "dependencies": {
+    "@neftaly/editcontext-polyfill": "^0.1.0"
+  },
+  "devDependencies": {
+    "@xterm/xterm": "6.1.0-beta.195",
+    "jsdom": "^29.0.1",
+    "typescript": "^5.8.2",
+    "vitest": "^3.0.7"
+  }
+}
